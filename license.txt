@@ -1,0 +1,8 @@
+You are welcome to use and modify these files under the condition
+that you leave this message included with the files at all time.
+
+Do not redistribute these files outwith the optical manipulation
+group in St. Andrews!
+
+Please let us know if you have any suggestions for improving
+this code, and feel free to commit your own code to the repository.
