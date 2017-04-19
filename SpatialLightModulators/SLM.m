@@ -56,7 +56,12 @@ classdef SLM < handle
                 end
             end
             slm.displayNumber=displayNumber;
-            slm.maxSize=slm.detectResolution(displayNumber);
+            
+            if displayNumber ~= -1
+                slm.maxSize=slm.detectResolution(displayNumber);
+            else
+                slm.maxSize=[512 512];
+            end
             slm.correctionFunction=1;
             if (~isempty(slm.maxSize)),
                 if (nargin<2 || isempty(referenceDeflectionFrequency))
@@ -191,12 +196,11 @@ classdef SLM < handle
                 displaySize(2) = screenDevices(displayNumber).getDisplayMode().getWidth();
             else
                 if (ishandle(displayNumber) && strcmpi(get(displayNumber,'Type'),'axes'))
-                    img=get(get(displayNumber,'Children'));
-                    if (isempty(img) || ~strcmpi(img.Type,'image'))
-                        img=image(zeros(300,400));
-                        img=get(img);
+                    img=findobj(displayNumber,'Type','image');
+                    if isempty(img)
+                        img=image(zeros(300,400),'Parent',displayNumber);
                     end
-                    displaySize=size(img.CData);
+                    displaySize=size(get(img,'CData'));
                     displaySize=displaySize(1:2);
                 else
                     displaySize=[];

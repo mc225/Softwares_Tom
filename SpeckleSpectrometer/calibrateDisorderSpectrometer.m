@@ -3,7 +3,7 @@
 % 
 function calibrateDisorderSpectrometer(wavelengths,slm,cam,source,outputFileName,emailsToNotify)
     if (nargin<1 || isempty(wavelengths))
-        wavelengths=[550 600 575 650]*1e-9;
+        wavelengths=[550 650 600]*1e-9;
         % Put them in a rectangle
         factors=factor(numel(wavelengths));
         gridSize(1)=prod(factors([1:floor(end/4) (floor(3*end/4)+1):end]));
@@ -17,8 +17,8 @@ function calibrateDisorderSpectrometer(wavelengths,slm,cam,source,outputFileName
     end
     if (nargin<3 || isempty(cam))
         cam=BaslerGigECam();
-        cam.integrationTime=30e-3;
-        cam.gain=10;
+        cam.integrationTime=3e-3;
+        cam.gain=1;
     end
     if (nargin<4 || isempty(source))
         % Initialize the SuperK
@@ -30,9 +30,8 @@ function calibrateDisorderSpectrometer(wavelengths,slm,cam,source,outputFileName
     end
     progressEmailAddresses={'tv2@st-andrews.ac.uk','adf10@st-andrews.ac.uk'};
     if (nargin<6 || isempty(emailsToNotify))
-        emailsToNotify={'mp399@st-andrews.ac.uk',progressEmailAddresses};
+        emailsToNotify=progressEmailAddresses;
     end
-    
     
     nbWavelengths=size(wavelengths);
     

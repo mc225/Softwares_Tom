@@ -16,8 +16,8 @@ function testDisorderSpectrometer(transferMatrix,wavelengths,cam,slm,source)
     end
     if (nargin<4 || isempty(cam))
         cam=BaslerGigECam();
-        cam.integrationTime=10e-3;
-        cam.gain=10;
+        cam.integrationTime=5e-3;
+        cam.gain=1;
     end
     if (nargin<5 || isempty(source))
         % Initialize the SuperK
@@ -46,23 +46,24 @@ function testDisorderSpectrometer(transferMatrix,wavelengths,cam,slm,source)
     % Display
     fig=figure;
     try
-        idx=1;
+        wavelengthIdx=1;
         while(ishandle(fig))
-            wavelength=wavelengths(idx);
+            wavelength=wavelengths(wavelengthIdx);
             %Adjust the SLM for the new wavelength
             slm.referenceDeflectionFrequency=baseDeflectionFrequency/wavelength; % Keep tilt the same on the sample
             slm.twoPiEquivalent=baseTwoPiEquivalent*wavelength; % Keep efficiency identical
+%             slm.correctionFunction=calcCorrectionFromPupilFunction(transferMatrix(:,:,wavelengthIdx),amplificationLimit);
             slm.modulate(1); % Update the SLM with the new grating
             % Set the source wavelength now
             source.setWavelengths(wavelength);
             img=cam.acquire();
             if (ishandle(fig))
                 figure(fig);
-                imagesc(img);
+                showImage(img);
                 title(sprintf('Wavelength: %0.1f nm',wavelength*1e9));
                 drawnow();
                 pause(.05);
-                idx=1+mod(idx,numel(wavelengths));
+                wavelengthIdx=1+mod(wavelengthIdx,numel(wavelengths));
             end
         end
     catch Exc

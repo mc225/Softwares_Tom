@@ -5,50 +5,40 @@ classdef Cam < handle
         integrationTime;
         gain;
         regionOfInterest;
-        defaultNumberOfFramesToAverage;
     end
     properties (Abstract, SetAccess = private)
         maxSize;
         bitsPerPixel;
     end
     properties
-        background=0;
+        background=[];
         acquisitionFunctor=[];
+        numberOfFramesToAverage=1;
     end
     
     methods
         function cam=Cam()
         end
-        function cam=acquireBackground(cam,nbFrames)
+        function cam=acquireBackground(cam,nbFramesToAverage)
             if (nargin<2)
-                nbFrames=cam.defaultNumberOfFramesToAverage;
+                nbFramesToAverage=cam.numberOfFramesToAverage;
+                % Temporarily change the number of frames that needs to be averaged
+                origNbFramesToAverage=cam.numberOfFramesToAverage;
+                cam.numberOfFramesToAverage=nbFramesToAverage;
             end
-            cam.background = cam.acquireDirect(nbFrames);
+            cam.background = cam.acquireDirect(1);
+            if (nargin<2)
+                cam.numberOfFramesToAverage=origNbFramesToAverage;
+            end
         end
         function img=acquire(cam,nbFrames)
             if (nargin<2)
-                nbFrames=cam.defaultNumberOfFramesToAverage;
-            end
-            img=cam.acquireDirect(nbFrames)-cam.background;
-            if (~isempty(cam.acquisitionFunctor))
-                if (ischar(cam.acquisitionFunctor))
-                    cam.acquisitionFunctor=str2func(cam.acquisitionFunctor);
-                end
-                switch (nargin(cam.acquisitionFunctor))
-                    case 0
-                        cam.acquisitionFunctor();
-                    otherwise
-                        cam.acquisitionFunctor(img);
-                end
-            end
-        end
-        
-        function img=acquireMultiple(cam,nbFrames) 
-            %new multiple frames into memory, Mingzhou
-            if (nargin<2)
                 nbFrames=1;
             end
-            img=cam.acquireMultipleFrames(nbFrames);
+            img=cam.acquireDirect(nbFrames);
+            if (~isempty(cam.background))
+                img=img-repmat(cam.background,[1 1 1 nbFrames]);
+            end
             if (~isempty(cam.acquisitionFunctor))
                 if (ischar(cam.acquisitionFunctor))
                     cam.acquisitionFunctor=str2func(cam.acquisitionFunctor);
@@ -63,7 +53,6 @@ classdef Cam < handle
         end
     end
     methods (Abstract=true, Access = protected)
-        img=acquireDirect(cam,nbFrames);        
-        img=acquireMultipleFrames(cam,nbFrames);
+        img=acquireDirect(cam,nbFrames);
     end 
 end

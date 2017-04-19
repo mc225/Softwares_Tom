@@ -5,7 +5,6 @@ classdef DummyCam < Cam
         integrationTime = 20e-3;
         gain = 1;
         regionOfInterest;
-        defaultNumberOfFramesToAverage = 1;
         acquireDirectFunctor=[];
     end
     properties (SetAccess = private)
@@ -41,7 +40,7 @@ classdef DummyCam < Cam
             gain=cam.gain;
         end
         function cam=set.regionOfInterest(cam,newROI)
-            cam.background=0;
+            cam.background=[];
             
             if (isempty(newROI))
                 newROI=[0 0 cam.maxSize];
@@ -57,7 +56,7 @@ classdef DummyCam < Cam
         end
         function cam=acquireBackground(cam,nbFrames)
             if (nargin<2)
-                nbFrames=cam.defaultNumberOfFramesToAverage;
+                nbFrames=cam.numberOfFramesToAverage;
             end
             
             %Remove the test object before taking the dark image
@@ -68,7 +67,7 @@ classdef DummyCam < Cam
         end
         function img=acquire(cam,nbFrames)
             if (nargin<2)
-                nbFrames=cam.defaultNumberOfFramesToAverage;
+                nbFrames=1;
             end
             img=acquire@Cam(cam,nbFrames);
         end
@@ -86,22 +85,24 @@ classdef DummyCam < Cam
                         img=cam.acquireDirectFunctor();
                     case 1
                         img=cam.acquireDirectFunctor(cam);
-                    otherwise
+                    case 2
                         img=cam.acquireDirectFunctor(cam,nbFrames);
+                    otherwise
+                        img=cam.acquireDirectFunctor(cam,nbFrames,cam.numberOfFramesToAverage);
                 end
             end
         end
     end
     methods (Access = private)
-        function img=acquireDirectDefaultFunctor(cam,nbFrames)
+        function img=acquireDirectDefaultFunctor(cam,nbFrames,numberOfFramesToAverage)
             integrationTimeUnits=nbFrames*cam.integrationTime/20e-3;
             
-            frm=cam.testObject;
+            frm=repmat(cam.testObject,[1 1 1 nbFrames]);
             frm=frm+5; %Dark noise
             frm=frm*cam.gain;
-            frm=frm*integrationTimeUnits+sqrt(frm*integrationTimeUnits).*randn(size(frm));
+            frm=frm*integrationTimeUnits+sqrt(frm*integrationTimeUnits).*randn(size(frm))./sqrt(numberOfFramesToAverage);
             
-            img=floor(frm/nbFrames);
+            img=floor(frm);
             
             %Normalize the maximum graylevel to 1
             img=img./(2^cam.bitsPerPixel-1);

@@ -20,7 +20,7 @@
 %     % Shut down and free connection
 %     source.delete();  % Shut everything down
 
-classdef SuperK < handle
+classdef SuperK < LightSource
     % NKT Photonics SuperK class
     %
     properties(Access = private)
@@ -45,6 +45,7 @@ classdef SuperK < handle
         maxWavelength; % [m]
         temperature;   % [K]
         temperatureRF;   % [K]
+        keySwitchOn; % 0: off, 1:on
         
         wavelengths; % [m]
         relativePowers; % fraction
@@ -93,6 +94,10 @@ classdef SuperK < handle
         end
         function value=get.interlock(source)
             [ign value]=source.getStatus();
+        end
+        function value=get.keySwitchOn(source)
+            [ign ign ign interlockLoopOff]=source.getStatus();
+            value=~interlockLoopOff;
         end
         function set.emission(source,value)
             source.writeRegister(source.extremeSystemAddress,hex2dec('30'),value*3); % Emission off / on
@@ -257,6 +262,9 @@ classdef SuperK < handle
         function initialize(source)
             source.interlock=false;
             loadWavelengths(source);
+            if (~source.keySwitchOn)
+                logMessage('Note: The keyswitch on the front panel is not turned to ON yet!');
+            end
         end
         function deinitialize(source)
             source.setWavelengths([]);

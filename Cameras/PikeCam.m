@@ -14,7 +14,6 @@ classdef PikeCam < Cam
         integrationTime; % seconds
         gain;
         regionOfInterest;
-        defaultNumberOfFramesToAverage;
     end
     
     methods
@@ -78,7 +77,7 @@ classdef PikeCam < Cam
             
             cam.regionOfInterest=[0 0 cam.maxSize];
             
-            cam.defaultNumberOfFramesToAverage=1;
+            cam.numberOfFramesToAverage=1;
         end
         function cam=set.integrationTime(cam,newIntegrationTime)
             props=propinfo(cam.videoSource,'ExtendedShutter');
@@ -111,16 +110,8 @@ classdef PikeCam < Cam
         function gain=get.gain(cam)
             gain=cam.videoSource.Gain;
         end
-        function cam=set.defaultNumberOfFramesToAverage(cam,newDefaultNumberOfFramesToAverage)
-            ensureVideoStopped(cam);
-            cam.videoInput.FramesPerTrigger=newDefaultNumberOfFramesToAverage;
-            ensureVideoStarted(cam);
-        end
-        function defaultNumberOfFramesToAverage=get.defaultNumberOfFramesToAverage(cam)
-            defaultNumberOfFramesToAverage=cam.videoInput.FramesPerTrigger;
-        end
         function cam=set.regionOfInterest(cam,newROI)
-            cam.background=0;
+            cam.background=[];
             
             if (isempty(newROI))
                 newROI=[0 0 cam.maxSize];
@@ -142,19 +133,6 @@ classdef PikeCam < Cam
         function roi=get.regionOfInterest(cam)
             roi([2 1 4 3])=cam.videoInput.ROIPosition;
         end
-        function cam=acquireBackground(cam,nbFrames)
-            if (nargin<2)
-                nbFrames=cam.defaultNumberOfFramesToAverage;
-            end
-            cam=acquireBackground@Cam(cam,nbFrames);
-        end
-        function img=acquire(cam,nbFrames)
-            if (nargin<2)
-                nbFrames=cam.defaultNumberOfFramesToAverage;
-            end
-            
-            img=acquire@Cam(cam,nbFrames);
-        end
         function delete(cam)
             delete@Cam(cam);
             
@@ -165,40 +143,38 @@ classdef PikeCam < Cam
     end
     methods(Access = protected)
         function img=acquireDirect(cam,nbFrames)
+            nbColorChannels=1;
             imgSize=cam.regionOfInterest(3:4);
-            img=zeros(imgSize);
-            framesPerTrigger=1; %cam.defaultNumberOfFramesToAverage;
-             
-            %Round the number of frames up to a multiple of the frames per trigger
-            nbFrames=nbFrames*ceil(nbFrames/framesPerTrigger);
-            for (triggerIdx=1:nbFrames/framesPerTrigger)
-                snapshots=[];
-                while (isempty(snapshots) || size(snapshots,1)~=imgSize(1) || size(snapshots,2)~=imgSize(2))
-                    ensureVideoStarted(cam);
-                    %trigger(cam.videoInput);
-                    try
-%                         snapshots=double(swapbytes(getdata(cam.videoInput,framesPerTrigger)));
-                        snapshots=double(swapbytes(getsnapshot(cam.videoInput)));
-                    catch Exc
-                        logMessage('Something went wrong, reseting the videoinput object...');
-                        stop(cam.videoInput);
-                        start(cam.videoInput);
+            img=zeros([imgSize nbColorChannels nbFrames]);
+            
+            % The following is not thread-safe, so better store this now
+            numberOfFramesToAverage=cam.numberOfFramesToAverage;
+            for (frameIdx=1:nbFrames)
+                for (triggerIdx=1:cam.numberOfFramesToAverage)
+                    snapshot=[];
+                    while (isempty(snapshot) || size(snapshot,1)~=imgSize(1) || size(snapshot,2)~=imgSize(2))
+                        ensureVideoStarted(cam);
+                        try
+                            snapshot=single(swapbytes(getsnapshot(cam.videoInput)));
+                        catch Exc
+                            logMessage('Something went wrong, reseting the videoinput object...');
+                            stop(cam.videoInput);
+                            start(cam.videoInput);
+                        end
                     end
-                end
-                %Normalize the maximum graylevel to 1
-                snapshots=snapshots./(2^cam.bitsPerPixel-4);
-                
-                %Debug info
-                if (max(snapshots(:))==1)
-                    logMessage('%u pixels are saturated in %u frames!',[sum(snapshots(:)==max(snapshots(:))) framesPerTrigger]);
-                end
-                
-                img=img+sum(snapshots,4);
+                    %Normalize the maximum graylevel to 1
+                    snapshot=snapshot./(2^cam.bitsPerPixel-4);
 
+                    %Debug info
+                    if (max(snapshot(:))==1)
+                        logMessage('%u pixels are saturated in %u frames!',[sum(snapshot(:)==max(snapshot(:))) framesPerTrigger]);
+                    end
+
+                    img(:,:,:,frameIdx)=img(:,:,:,frameIdx)+sum(snapshot,4);
+                end
             end
             
-            img=img./nbFrames;
-            
+            img=img./numberOfFramesToAverage;
         end
     end
     methods (Access = private)

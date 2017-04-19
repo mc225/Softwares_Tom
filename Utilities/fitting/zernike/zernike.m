@@ -11,6 +11,13 @@
 %    Returns the Zernike polynomial with standard coefficient j
 %       "Zernike polynomials and atmospheric turbulence", Robert J. Noll,
 %       JOSA, Vol. 66, Issue 3, pp. 207-211, doi:10.1364/JOSA.66.000207
+%     The first of which are: piston,
+%                             tip(x),tilt(y),
+%                             defocus, astigmatism-diag,astigmatism-x,
+%                             coma-y,coma-x,  trefoil-y,trefoil-x,
+%                             spherical aberration
+%                  where the postscripts indicate the position of the extreme
+%                  value on the pupil edge.
 %
 %This function can handle rho and theta vectors but not m and n vectors.
 %

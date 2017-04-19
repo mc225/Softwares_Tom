@@ -17,7 +17,6 @@ classdef ImagingSourceCam < Cam
         integrationTime; % seconds
         gain;
         regionOfInterest;
-        defaultNumberOfFramesToAverage;
     end
     
     methods
@@ -120,7 +119,7 @@ classdef ImagingSourceCam < Cam
             
             cam.regionOfInterest=[0 0 cam.maxSize];
             
-            cam.defaultNumberOfFramesToAverage=1;
+            cam.numberOfFramesToAverage=1;
         end
         function cam=set.integrationTime(cam,newIntegrationTime)
             if (cam.canSetIntegrationTime)
@@ -156,16 +155,8 @@ classdef ImagingSourceCam < Cam
                 gain=0;
             end
         end
-        function cam=set.defaultNumberOfFramesToAverage(cam,newDefaultNumberOfFramesToAverage)
-            ensureVideoStopped(cam);
-            cam.videoInput.FramesPerTrigger=newDefaultNumberOfFramesToAverage;
-            ensureVideoStarted(cam);
-        end
-        function defaultNumberOfFramesToAverage=get.defaultNumberOfFramesToAverage(cam)
-            defaultNumberOfFramesToAverage=cam.videoInput.FramesPerTrigger;
-        end
         function cam=set.regionOfInterest(cam,newROI)
-            cam.background=0;
+            cam.background=[];
             
             if (isempty(newROI))
                 newROI=[0 0 cam.maxSize];
@@ -187,18 +178,6 @@ classdef ImagingSourceCam < Cam
         function roi=get.regionOfInterest(cam)
             roi([2 1 4 3])=cam.videoInput.ROIPosition;
         end
-        function cam=acquireBackground(cam,nbFrames)
-            if (nargin<2)
-                nbFrames=cam.defaultNumberOfFramesToAverage;
-            end
-            cam=acquireBackground@Cam(cam,nbFrames);
-        end
-        function img=acquire(cam,nbFrames)
-            if (nargin<2)
-                nbFrames=cam.defaultNumberOfFramesToAverage;
-            end
-            img=acquire@Cam(cam,nbFrames);
-        end
         function delete(cam)
             delete@Cam(cam);
             
@@ -209,45 +188,57 @@ classdef ImagingSourceCam < Cam
     end
     methods(Access = protected)
         function img=acquireDirect(cam,nbFrames)
-            framesPerTrigger=cam.defaultNumberOfFramesToAverage;
+            nbColorChannels=1;
+            maxPixelValue=(2^cam.bitsPerPixel-1-1.0*cam.maxValue254);
+            imgSize=cam.hardwareRegionOfInterest(3:4);
              
-            %Round the number of frames up to a multiple of the frames per trigger
-            nbFrames=nbFrames*ceil(nbFrames/framesPerTrigger);
-            for (triggerIdx=1:nbFrames/framesPerTrigger)
-                snapshots=[];
-                while (isempty(snapshots))
-                    ensureVideoStarted(cam);
-                    trigger(cam.videoInput);
-                    try
-                        snapshots=double(getdata(cam.videoInput,framesPerTrigger));
-                    catch Exc
-                        logMessage('Something went wrong, reseting the videoinput object...');
-                        stop(cam.videoInput);
-                        start(cam.videoInput);
+            % The following is not thread-safe, so better store this now
+            numberOfFramesToAverage=cam.numberOfFramesToAverage;
+            framesPerTrigger=nbFrames*numberOfFramesToAverage;
+            if (get(cam.videoInput,'FramesPerTrigger')~=framesPerTrigger)
+                ensureVideoStopped(cam);
+                set(cam.videoInput,'FramesPerTrigger',framesPerTrigger);
+            end
+                
+            img=[];
+            while (isempty(img) || any([size(img,1) size(img,2)]~=imgSize))
+                ensureVideoStarted(cam);
+                trigger(cam.videoInput);
+                try
+                    img=getdata(cam.videoInput,framesPerTrigger);
+                    %Debug info
+                    if (max(img(:))>=maxPixelValue)
+                        msg=sprintf('%u pixels are saturated',sum(img(:)==max(img(:))));
+                        if (framesPerTrigger~=1)
+                            msg=strcat(msg,sprintf(' in %u frames',framesPerTrigger));
+                        end
+                        logMessage(msg);
                     end
+                    % Average cam.numberOfFramesToAverage consecutive frames
+                    img=mean(single(reshape(img,[],numberOfFramesToAverage,nbFrames)),2);
+                    img=reshape(img,[imgSize nbColorChannels nbFrames]);
+                catch Exc
+                    logMessage('Something went wrong, reseting the videoinput object...');
+                    stop(cam.videoInput);
+                    start(cam.videoInput);
                 end
-                %Debug info
-                if (any(snapshots(:)==(2^cam.bitsPerPixel-1)))
-                    logMessage('%u pixels are saturated in %u frames!',[sum(snapshots(:)==(2^cam.bitsPerPixel-1)) framesPerTrigger]);
-                end
-                %Normalize the maximum graylevel to 1
-                snapshots=snapshots./(2^cam.bitsPerPixel-1);
-                
-                snapshots=snapshots(:,:,1);
-                snapshots=sum(snapshots,4);
-                
-                if (triggerIdx==1)
-                    img=snapshots;
-                else
-                    img=img+snapshots;
-                end
-
             end
+            %Normalize the maximum graylevel to 1
+            img=img./maxPixelValue;
             
-            if (nbFrames>1)
-                img=img./nbFrames;
+            %Check if we need to crop or expand the image in software
+            if (any(cam.softwareRegionOfInterest~=cam.hardwareRegionOfInterest))
+                rangeBeginDiffs=cam.softwareRegionOfInterest(1:2)-cam.hardwareRegionOfInterest(1:2);
+                rangeEndDiffs=cam.softwareRegionOfInterest(1:2)+cam.softwareRegionOfInterest(3:4)-cam.hardwareRegionOfInterest(1:2)-cam.hardwareRegionOfInterest(3:4);
+                % Crop
+                img=img(max(1,1+max(0,rangeBeginDiffs(1))):end-max(0,-rangeEndDiffs(1)),max(1,1+max(0,rangeBeginDiffs(2))):end-max(0,-rangeEndDiffs(2)),:,:);
+                if (any([size(img,1) size(img,2)]<cam.softwareRegionOfInterest(3:4)))
+                    % Zero pad
+                    resizedImg=zeros([cam.softwareRegionOfInterest(3:4) size(img,3) size(img,4)]);
+                    resizedImg(max(0,-rangeBeginDiffs(1))+[1:size(img,1)],max(0,-rangeBeginDiffs(2))+[1:size(img,2)],:,:)=img;
+                    img=resizedImg; clear resizedImg;
+                end
             end
-            
         end
     end
     methods (Access = private)

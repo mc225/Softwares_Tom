@@ -1,32 +1,47 @@
 %
-% Executes the aberration correction GUI.
+% Graphical User Interface to control the SLM and laser while monitoring the camera output.
+% This tool can be used with all SLM based set-ups, both for quick testing,
+% alignment, aberration correction (various methods), and actual measurement.
+%
+% Current features:
+%  - control of complex (amplitude and phase) on both phase-only and dual
+%  head SLMs.
+%  - simple syntax for defining complex, and dynamic pupil modulations:
+%          - X: the horizontal coordinate in pixels, left from the center (rounded up)
+%          - Y: the vertical coordinate in pixels, down from the center (rounded up)
+%          - R (or Rho, or Rh): the radial coordinate in pixels (sqrt(X.^2+Y.^2))
+%          - P (or Phi, or Ph): the azimutal coordinate in pixels (atan2(Y,X))
+%          - t (or time): the time in seconds after entering the expression
+%          - any other Matlab matrix function (including your custom functions).
+%          - scalar notation works as well, e.g. exp(2i*pi*X^2) causes 
+%  - first order and zero-order modulation
+%  - aberration correction using:
+%          - Plane waves at back aperture plane (M)azilu method
+%          - Plane waves at focal plane (C)izmar method
+%          - (Z)ernike modes (local, phase only optimization)
+%  - amplitude attenuation can be corrected as well as phase
+%  - precalibrated aberration corrections can be loaded
+%  - 3D control of first order spot
+%  - gamma curve adjustement for different wavelengths
+%  - recording of images or movies
+%  - permits frame averaging to increase the SNR
+%  - suports all cameras for which the Cam interface is implemented
+%  - allows control of the light source (currently only the NKT SuperK supercontinuum)
+%  - can be tested without camera and/or SLM
+%
+%
+% You are welcome to use and modify these files under the condition
+% that you leave this message included with the files at all time.
+% Do not redistribute these files outwith the optical manipulation
+% group in St. Andrews!
+% Please let me know if you have any suggestions for improving
+% this code, and feel free to commit your own improvements to the repository.
+% 
+% Thanks,
+%
+% Tom Vettenburg
 %
 function varargout = monitor(varargin)
-% MONITOR M-file for monitor.fig
-%      MONITOR, by itself, creates a new MONITOR or raises the existing
-%      singleton*.
-%
-%      H = MONITOR returns the handle to a new MONITOR or the handle to
-%      the existing singleton*.
-%
-%      MONITOR('CALLBACK',hObject,eventData,handles,...) calls the local
-%      function named CALLBACK in MONITOR.M with the given input arguments.
-%
-%      MONITOR('Property','Value',...) creates a new MONITOR or raises the
-%      existing singleton*.  Starting from the left, property value pairs are
-%      applied to the GUI before monitor_OpeningFcn gets called.  An
-%      unrecognized property name or invalid value makes property application
-%      stop.  All inputs are passed to monitor_OpeningFcn via varargin.
-%
-%      *See GUI Options on GUIDE's Tools menu.  Choose "GUI allows only one
-%      instance to run (singleton)".
-%
-% See also: GUIDE, GUIDATA, GUIHANDLES
-
-    % Edit the above text to modify the response to help monitor
-
-    % Last Modified by GUIDE v2.5 24-Jun-2011 19:57:48
-
     % Begin initialization code - DO NOT EDIT
     gui_Singleton = 1;
     gui_State = struct('gui_Name',       mfilename, ...
@@ -55,6 +70,9 @@ function monitor_OpeningFcn(fig, eventdata, handles, varargin)
     % handles    structure with handles and user data (see GUIDATA)
     % varargin   command line arguments to monitor (see VARARGIN)
 
+    % Avoid racing conditions
+    set(fig,'Interruptible','off')
+    
     % Choose default command line output for monitor
     handles.output = fig;
 
@@ -72,6 +90,11 @@ function monitor_OpeningFcn(fig, eventdata, handles, varargin)
     
     setUserData('probing',false);
     setUserData('slm',[]);
+    setUserData('lightSource',[]);
+    detectedLightSources=detectLightSources();
+    setUserData('detectedLightSources',detectedLightSources);
+    setUserData('baseWavelength',[]);
+    setUserData('sourceWavelengthForDeflectionCorrection',[]);
     setUserData('camRequestedRegionOfInterest',[-1 -1 -1 -1]);
     setUserData('currentImageOnSLM',[]);
     setUserData('initialTimeOfGUI',clock());
@@ -84,7 +107,8 @@ function monitor_OpeningFcn(fig, eventdata, handles, varargin)
     set(fig,'BackingStore','off');
 %     set(fig,'DoubleBuffer','off'); %Required?
     cameraPanel=uipanel('Parent',fig,'Units','normalized','Position',[0 0 .5 1],'Title','Camera');
-    slmPanel=uipanel('Parent',fig,'Units','normalized','Position',[.5 0 .5 1],'Title','Spatial Light Modulator');
+    slmPanel=uipanel('Parent',fig,'Units','normalized','Position',[.5 0 .5 .9],'Title','Spatial Light Modulator');
+    lightSourcePanel=uipanel('Parent',fig,'Units','normalized','Position',[.5 0.9 .5 .1],'Title','Light Source');
     
     histogramAxes=axes('Parent',cameraPanel);
     set(histogramAxes,'Position',[.15 .875 .8 .1],'Units','normalized');
@@ -152,11 +176,36 @@ function monitor_OpeningFcn(fig, eventdata, handles, varargin)
     uicontrol('Parent',recordingPanel,'Position',[175 5 35 20],'Style', 'togglebutton','String','REC!','Callback',@toggleOutputRecording);
     
     %
+    % Source Panel
+    %
+    changeLightSourcePopUpMenu=uicontrol('Parent',lightSourcePanel,'Position',[5 5 70 20],'Tag','changeLightSourcePopUpMenu','Style', 'popupmenu', 'Callback', @changeLightSource);
+    lightSourceTypeIdx=find(strcmp({detectedLightSources.type},getStatus('defaultLightSourceType')),1);
+    if (isempty(lightSourceTypeIdx))
+        lightSourceTypeIdx=1;
+    else
+        lightSourceTypeIdx=lightSourceTypeIdx(1);
+    end
+    set(changeLightSourcePopUpMenu,'String',{detectedLightSources.description},'Value',lightSourceTypeIdx);
+    setUserData('changeLightSourcePopUpMenu',changeLightSourcePopUpMenu);
+    uicontrol('Parent',lightSourcePanel,'Position',[80 5 75 20],'Style','text','String','target power:');
+    targetPowerEdit=uicontrol('Parent',lightSourcePanel,'Position',[150 5 40 20],'Tag','targetPowerEdit','Style', 'edit', 'Callback', @adjustTargetPower,'String',getStatus('targetPower','0'));
+    uicontrol('Parent',lightSourcePanel,'Position',[190 5 30 20],'Style','text','String','%');
+    setUserData('targetPowerEdit',targetPowerEdit);
+    uicontrol('Parent',lightSourcePanel,'Position',[190 5 95 20],'Style','text','String','wavelengths:');
+    wavelengthsEdit=uicontrol('Parent',lightSourcePanel,'Position',[280 5 120 20],'Tag','wavelengthsEdit','Style', 'edit', 'Callback', @adjustWavelengths,'String',getStatus('wavelengths','500'));
+    uicontrol('Parent',lightSourcePanel,'Position',[390 5 30 20],'Style','text','String','nm');
+    setUserData('wavelengthsEdit',wavelengthsEdit);
+    uicontrol('Parent',lightSourcePanel,'Position',[415 5 95 20],'Style','text','String','base wavelength:');
+    baseWavelengthEdit=uicontrol('Parent',lightSourcePanel,'Position',[510 5 60 20],'Tag','baseWavelengthEdit','Style', 'edit', 'Callback', @adjustBaseWavelength,'String',getStatus('baseWavelength','500'));
+    uicontrol('Parent',lightSourcePanel,'Position',[570 5 30 20],'Style','text','String','nm');
+    setUserData('baseWavelengthEdit',baseWavelengthEdit);
+    
+    %
     % Spatial Light Modulator
     %
     slmControlPanel=uipanel('Parent',slmPanel,'Title','SLM Control','Units','pixels','Position',[10 10 530 90]);
     changeSLMPopUpMenu=uicontrol('Parent',slmControlPanel,'Position',[5 55 90 20],'Tag','changeSLMPopUpMenu','Style', 'popupmenu', 'Callback', @updateSLMDisplayNumberOrSLM);
-    set(changeSLMPopUpMenu,'String',{'phase only SLM','dual head SLM'},'Value',getStatus('slmTypeIndex',1));
+    set(changeSLMPopUpMenu,'String',{'phase only SLM','dual head SLM','BNS phase SLM'},'Value',getStatus('slmTypeIndex',1));
     setUserData('changeSLMPopUpMenu',changeSLMPopUpMenu);
     uicontrol('Parent',slmControlPanel,'Position',[95 55 20 20],'Style','text','String','on:');
     slmDisplayNumberPopUpMenu=uicontrol('Parent',slmControlPanel,'Position',[112 55 100 20],'Tag','slmDisplayNumberPopUpMenu','Style', 'popupmenu', 'Callback', @updateSLMDisplayNumberOrSLM);
@@ -202,10 +251,10 @@ function monitor_OpeningFcn(fig, eventdata, handles, varargin)
     uicontrol('Parent',slmControlPanel,'Position',[420 5 20 20],'Style','pushbutton','String','A','FontWeight','bold','Callback', @(obj,event) insertPupilRadiusAndUpdateSLM('(R<pupilRadius)*exp(3*2i*pi*((X/pupilRadius)^3+(Y/pupilRadius)^3))'));
     uicontrol('Parent',slmControlPanel,'Position',[440 5 20 20],'Style','pushbutton','String','+','FontWeight','bold','Callback', @(obj,event) insertPupilRadiusAndUpdateSLM('(R<pupilRadius)*(abs(R*cos(P-t*pi/20))<pupilRadius/50 | abs(R*sin(P-t*pi/20))<pupilRadius/50)'));
     setUserData('maskEdit',maskEdit); 
-    
 %     align(HandleList,'Fixed',5,'Fixed',10);
 
     changeSLM(changeSLMPopUpMenu,[]);
+    changeLightSource(); % Do this after setting the deflection
     
     dragzoom(cameraAxes);
     set(fig,'Name','monitor - SLM aberration correction GUI');
@@ -245,7 +294,7 @@ function updatePupilModulationOnSLM()
             %
             % Remove image if the size is different
             pupilAxes=getUserData('pupilAxes');
-            imgObject=get(pupilAxes,'Children');
+            imgObject=findobj(pupilAxes,'Type','image');
             if (~isempty(imgObject))
                 %Determine current image size
                 currentImgSize=size(get(imgObject,'CData'));
@@ -298,6 +347,7 @@ function acquireAndDisplay()
     cam=getUserData('cam');
     updateCamROI(newROI);
     img=cam.acquire();
+    
     %Draw image
     displayOnMonitor(img);
 end
@@ -310,7 +360,11 @@ function displayOnMonitor(img)
         img=zeros(cam.regionOfInterest(3:4));
     end
     
-    nonSaturatedPixels=img+cam.background<1;
+    if (~isempty(cam.background))
+        nonSaturatedPixels=img+repmat(cam.background,[1 1 1 size(img,4)])<1;
+    else
+        nonSaturatedPixels=img<1;
+    end
     normalizedImg=img;
     if (all(nonSaturatedPixels(:)))
         maxLevel=max(img(:));
@@ -346,9 +400,14 @@ function displayOnMonitor(img)
     %Plot histogram
     histAx=getUserData('histogramAxes');
     nbGrayLevelsForHistogram=256;
-    relPixelCountsPerGrayLevel=histc(img(:),[0:nbGrayLevelsForHistogram]/nbGrayLevelsForHistogram)./numel(img);
-    relPixelCountsPerGrayLevel(end-1)=relPixelCountsPerGrayLevel(end-1)+relPixelCountsPerGrayLevel(end); %The last bin has the border cases of value == 1.0
-    relPixelCountsPerGrayLevel=relPixelCountsPerGrayLevel(1:end-1).'; % Remove last bin after copying in penultimate
+    if (numel(img)>1)
+        relPixelCountsPerGrayLevel=histc(img(:),[0:nbGrayLevelsForHistogram]/nbGrayLevelsForHistogram)./numel(img);
+        relPixelCountsPerGrayLevel(end-1)=relPixelCountsPerGrayLevel(end-1)+relPixelCountsPerGrayLevel(end); %The last bin has the border cases of value == 1.0
+        relPixelCountsPerGrayLevel=relPixelCountsPerGrayLevel(1:end-1).'; % Remove last bin after copying in penultimate
+    else
+        relPixelCountsPerGrayLevel=zeros(1,256);
+        relPixelCountsPerGrayLevel(max(end,1+round([0:nbGrayLevelsForHistogram]/nbGrayLevelsForHistogram)))=1;
+    end
     cla(histAx);
     patch(repmat([0.5:nbGrayLevelsForHistogram]/nbGrayLevelsForHistogram,[4 1])+repmat([-1 -1 1 1].'*.5/nbGrayLevelsForHistogram,[1 nbGrayLevelsForHistogram]),[0 1 1 0].'*relPixelCountsPerGrayLevel,[0:nbGrayLevelsForHistogram-1],'LineStyle','none','Parent',histAx);
     hold(histAx,'on');
@@ -438,7 +497,7 @@ function adjustNumberOfFrames(obj,event)
     if (isnumeric(newNumberOfFrames) && ~isnan(newNumberOfFrames))
         newIntegrationTime=max(1,round(newNumberOfFrames(1)));
         cam=getUserData('cam');
-        cam.defaultNumberOfFramesToAverage=newNumberOfFrames;
+        cam.numberOfFramesToAverage=newNumberOfFrames;
         setUserData('cam',cam);
     end
     
@@ -453,7 +512,7 @@ function updateDarkImage(obj,event)
         cam=cam.acquireBackground();
     else
         logMessage('Not using dark image.');
-        cam.background=0;
+        cam.background=[];
     end
     
     setUserData('cam',cam);
@@ -519,7 +578,10 @@ function changeCam(obj,event)
                 cam=DirectShowCam(selectedCamera.index);
             case 'PikeCam'
                 %Pike Show
-                cam=PikeCam(selectedCamera.index);
+%                 cam=PikeCam(selectedCamera.index);
+            case 'OrcaFlash4'
+                %Pike Show
+                cam=OrcaFlash4Cam(selectedCamera.index);
             otherwise
                 %DummyCam
                 switch (selectedCamera.index)
@@ -541,6 +603,7 @@ function changeCam(obj,event)
 
         cameraAxes=getUserData('cameraAxes');
 %         dragzoom(cameraAxes,'off');
+        adjustNumberOfFrames();
         initializeCamROIAndAxes();
         dragzoom(cameraAxes); % Update the default FOV
         adjustIntegrationTime();
@@ -574,7 +637,91 @@ function initializeCamROIAndAxes()
     hImage = image(roiSize,'Parent',ax); axis(ax,'equal');
     set(ax,'XLim',[0 roiSize(2)],'YLim',[0 roiSize(1)]);
 end
+%% Light Source callbacks
+function changeLightSource(obj,event)
+    if (nargin<1 || isempty(obj))
+        obj=getUserData('changeLightSourcePopUpMenu');
+    end
+    if (nargin<2 || isempty(event))
+        event=[];
+    end
+    delete(getUserData('lightSource')); % Stop the previous light source
+    
+    selectedLightSourceIdx=get(obj,'Value');
+    detectedLightSources=getUserData('detectedLightSources');
+    if (isempty(selectedLightSourceIdx) || selectedLightSourceIdx<1 || selectedLightSourceIdx>length(detectedLightSources))
+        selectedLightSourceIdx=1;
+    end
+    selectedLightSource=detectedLightSources(selectedLightSourceIdx);
+        
+    try
+        switch(selectedLightSource.type),
+            case 'SuperK'
+                lightSource=SuperK();
+            otherwise
+                %none
+                lightSource=[];
+        end
+        setUserData('lightSource',lightSource);
+    
+        updateStatus('lightSource',get(obj,'Value'));
+        
+        updateStatus('defaultLightSourceType',selectedLightSource.type);
 
+        adjustTargetPower();
+        adjustWavelengths();
+    catch Exc
+        logMessage(strcat('Could not initialize light source: ',selectedLightSource.description,', using none...'));
+        set(obj,'Value',1);
+        changeLightSource(obj,event);
+    end
+end
+function adjustTargetPower(obj,event)
+    lightSource=getUserData('lightSource');
+    if (~isempty(lightSource))
+        targetPower=str2double(get(getUserData('targetPowerEdit'),'String'));
+        if (isempty(targetPower))
+            targetPower=0;
+        end
+        updateStatus('targetPower',sprintf('%d',targetPower));
+        
+        targetPower=targetPower/100;
+        lightSource.targetPower=targetPower;
+    end
+end
+function adjustWavelengths(obj,event)
+    wavelengths=str2num(get(getUserData('wavelengthsEdit'),'String'));
+    if (isempty(wavelengths))
+        wavelengths=[];
+    end
+    updateStatus('wavelengths',get(getUserData('wavelengthsEdit'),'String'));
+
+    wavelengths=wavelengths*1e-9;
+        
+    lightSource=getUserData('lightSource');
+    if (~isempty(lightSource))
+        lightSource.setWavelengths(wavelengths);
+    end
+        
+    if (~isempty(wavelengths))
+        sourceWavelengthForDeflectionCorrection=median(wavelengths);
+    else
+        sourceWavelengthForDeflectionCorrection=[];
+    end
+    setUserData('sourceWavelengthForDeflectionCorrection',sourceWavelengthForDeflectionCorrection);
+    adjustBaseWavelength();
+end
+function adjustBaseWavelength(obj,event)
+    baseWavelength=str2double(get(getUserData('baseWavelengthEdit'),'String'));
+    if (isempty(baseWavelength))
+        baseWavelength=[];
+    end
+    updateStatus('baseWavelength',baseWavelength);
+    
+    baseWavelength=baseWavelength*1e-9;
+    setUserData('baseWavelength',baseWavelength);
+    adjustDeflection();
+end
 %% SLM callbacks
 function adjustDeflection(obj,event)
     if (nargin<1)
@@ -593,8 +740,16 @@ function adjustDeflection(obj,event)
             logMessage('The deflection frequency should be maximum 3 scalars.');
             newDeflection=newDeflection(1:3);
         end
+        baseWavelength=getUserData('baseWavelength');
+        sourceWavelengthForDeflectionCorrection=getUserData('sourceWavelengthForDeflectionCorrection');
+        if (~isempty(baseWavelength) && ~isempty(sourceWavelengthForDeflectionCorrection))
+            wavelengthDeflectionCorrection=baseWavelength/sourceWavelengthForDeflectionCorrection;
+        else
+            wavelengthDeflectionCorrection=1;
+        end
+        
         slm=getUserData('slm');
-        slm.referenceDeflectionFrequency=newDeflection([2 1 3]);
+        slm.referenceDeflectionFrequency=newDeflection([2 1 3])*wavelengthDeflectionCorrection;
         setUserData('slm',slm);
         
         updateSLMDisplayAndOutput();
@@ -748,8 +903,7 @@ function updateSLMDisplayNumberOrSLM(obj,event)
     slm=getUserData('slm');
     if (~isempty(slm))
         delete(slm); % Close any current SLM windows
-    end
-    
+    end   
     slmDisplayNumberPopUpMenu=getUserData('slmDisplayNumberPopUpMenu');
     slmDisplayNumber=get(slmDisplayNumberPopUpMenu,'Value');
     descriptors=get(slmDisplayNumberPopUpMenu,'String');
@@ -828,12 +982,14 @@ function changeSLM(obj,event)
             slm=PhaseSLM(slmDisplayNumber);
         case 2
             slm=DualHeadSLM(slmDisplayNumber);
+        otherwise
+            slm=BNSPhaseSLM();
     end
     updateStatus('slmTypeIndex',slmTypeIndex);
     if (ishandle(slmDisplayNumber) && strcmpi(get(slmDisplayNumber,'Type'),'axes'))
         slm.stabilizationTime=0.01; % For testing with the popup SLM
     else
-        slm.stabilizationTime=0.20;
+        slm.stabilizationTime=0.10;
     end
     % Adapt the SLM so we can know what it is doing when using the DummyCam
     slm.modulatePostFunctor=@(complexModulation,currentImageOnSLM) setUserData('currentImageOnSLM',currentImageOnSLM);
@@ -876,7 +1032,7 @@ end
 
 function img=calcDummyImage(imgSize,cam,nbFrames)
     wellDepth=40e3;
-    darkPhotonElectrons=100;
+    darkPhotonElectrons=10;
     photoElectronsPerGraylevel=wellDepth/(2^cam.bitsPerPixel);
     
     slm=getUserData('slm');
@@ -907,7 +1063,7 @@ function img=calcDummyImage(imgSize,cam,nbFrames)
     end
     
     % Calculate the simulated image with a Fourier transform
-    frm=numel(pupil)*abs(fftshift(ifft2(ifftshift(pupil(end:-1:1,end:-1:1)))).^2)/numel(pupil);
+    frm=sqrt(prod(slm.regionOfInterest(3:4)))*abs(fftshift(ifft2(ifftshift(pupil(end:-1:1,end:-1:1)))).^2);
     
     %Crop if bigger than imgSize
     frm=frm(floor((size(frm,1)-imgSize(1))/2)+[1:imgSize(1)],floor((size(frm,2)-imgSize(2))/2)+[1:imgSize(2)]);
@@ -921,16 +1077,20 @@ function img=calcDummyImage(imgSize,cam,nbFrames)
     % Restrict to ROI
     frm=frm(cam.regionOfInterest(1)+[1:cam.regionOfInterest(3)],cam.regionOfInterest(2)+[1:cam.regionOfInterest(4)],:);
     
-    %Simulate noise
-    frm=frm*wellDepth; %Convert to photo electrons
-%     frm=frm+darkPhotonElectrons; %Add dark noise
-    frm=frm*cam.gain;
-    integrationTimeUnits=nbFrames*cam.integrationTime/20e-3; %Assume that the laser power is adjusted for an integration time of 20ms
-    frm=frm*integrationTimeUnits;
-%     frm=frm+sqrt(frm*integrationTimeUnits).*randn(size(frm));
-%     frm=floor(frm/photoElectronsPerGraylevel);
+    outputSize=[size(frm,1) size(frm,2) size(frm,3) nbFrames];
+    img=zeros(outputSize);
+    for frameIdx=1:nbFrames,
+        %Simulate noise
+        frm=frm*wellDepth; %Convert to photo electrons
+        frm=frm+darkPhotonElectrons; %Add dark noise
+        integrationTimeUnits=cam.numberOfFramesToAverage*cam.integrationTime/20e-3; %Assume that the laser power is adjusted for an integration time of 20ms
+        frm=frm*integrationTimeUnits;
+        frm=frm+sqrt(frm).*randn(size(frm));
+        frm=frm*cam.gain;
+        frm=floor(frm/photoElectronsPerGraylevel);
 
-    img=frm/nbFrames;
+        img(:,:,:,frameIdx)=frm/cam.numberOfFramesToAverage;
+    end
 
     %Normalize the maximum graylevel to 1
     img=min(1,img./(2^cam.bitsPerPixel-1));
@@ -1034,11 +1194,12 @@ function estimateCorrection(obj,event)
         probeSize=getUserData('probeSize');
         
         %Make sure that nobody changes the region of interest of the camera!
-        if (~all(cam.regionOfInterest~=camRegionOfInterest))
+        if (any(cam.regionOfInterest~=camRegionOfInterest))
             cam.regionOfInterest=camRegionOfInterest;
         end
         
-        img=cam.acquire();
+        img=cam.acquire(2);
+        img=img(:,:,1,2); % Drop the transient frame
         
         if (size(img,1)<probeSize(1))
             img(probeSize(1),:)=mean(img,1);
@@ -1076,7 +1237,7 @@ function estimateCorrection(obj,event)
         correctionEdit=getUserData('correctionEdit');
         calibrationFileName=get(correctionEdit,'String');
         if (isempty(strtrim(calibrationFileName)))
-            calibrationFileName=strcat(pwd(),'/calibrateSetup_',datestr(now(),'YYYY-mm-DD'),'.mat');
+            calibrationFileName=fullfile(pwd(),['calibrateSetup_',datestr(now(),'YYYY-mm-DD'),'.mat']);
             set(correctionEdit,'String',calibrationFileName);
         end
 
@@ -1095,7 +1256,7 @@ function estimateCorrection(obj,event)
                 logMessage('Using Zernike wavefront measurement method with %d coefficients.',[size(zernikeCoefficientIndexes,2)]);
                 measuredPupilFunction=aberrationMeasurementZernikeWavefront(slm,zernikeCoefficientIndexes,@probeFunctor,@progressFunctor);
             otherwise
-                probeGridSize=[25 25 3];
+                probeGridSize=[25 25 3];% probeGridSize=[25 25 3];
                 %probeGridSize=[12 12 3]; %test with smaller grid size; Mingzhou
                 logMessage('Using Michael Mazilu''s aberration measurement method with a maximum of %dx%d probes and %d phases.',probeGridSize);
                 measuredPupilFunction=aberrationMeasurement(slm,probeGridSize,@probeFunctor,@progressFunctor);
@@ -1159,7 +1320,7 @@ function estimateTwoPiEquivalentCallback(obj,event)
         correctionEdit=getUserData('correctionEdit');
         calibrationFileName=get(correctionEdit,'String');
         if (isempty(strtrim(calibrationFileName)))
-            calibrationFileName=strcat(pwd(),'/calibrateSetup_',datestr(now(),'YYYY-mm-DD'),'.mat');
+            calibrationFileName=fullfile(pwd(),['calibrateSetup_',datestr(now(),'YYYY-mm-DD'),'.mat']);
             set(correctionEdit,'String',calibrationFileName);
         end
 
@@ -1319,6 +1480,17 @@ function cameras=detectCameras()
             end
         end
     end
+    if (any(strcmpi(hwInfo.InstalledAdaptors,'hamamatsu')))
+    	hwInfoPC=imaqhwinfo('hamamatsu');
+        for (camIdx=1:length(hwInfoPC.DeviceIDs))
+            cameras(end+1).type='OrcaFlash4';
+            cameras(end).index=hwInfoPC.DeviceIDs{camIdx};
+            cameras(end).description='Orca Flash 4.0';
+            if (length(hwInfoPC.DeviceIDs)>1)
+                cameras(end).description=strcat(cameras(end).description,sprintf(' %.0f',hwInfoPC.DeviceIDs{camIdx}));
+            end
+        end
+    end
     if (exist('vcapg2'))
         numberOfCards=vcapg2();
         for cardIdx=1:numberOfCards,
@@ -1330,6 +1502,15 @@ function cameras=detectCameras()
             end
         end
     end
+end
+
+% TODO: Implement
+function detectedLightSources=detectLightSources()
+    detectedLightSources=struct();
+    detectedLightSources.type='none';
+    detectedLightSources.description='none';
+    detectedLightSources(2).type='SuperK';
+    detectedLightSources(2).description='SuperK';
 end
 
 function str=formatNumberForTickLabel(number,numberForPrec)

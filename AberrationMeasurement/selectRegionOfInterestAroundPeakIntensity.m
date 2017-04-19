@@ -8,13 +8,16 @@ function [cam centerPos]=selectRegionOfInterestAroundPeakIntensity(cam,slm,roiSi
     if (nargin<4 || isempty(centerPos))
         %Capture dark image
         slm.modulate(0); %The CCD should now be unilluminated in principle
-        cam=cam.acquireBackground(cam.defaultNumberOfFramesToAverage*4);
+        cam=cam.acquireBackground(); %GT 10Dec15 - to avoid the failure in capturing the bright spot
+        cam=cam.acquireBackground(cam.numberOfFramesToAverage*4);
         
         irradiationIntensityScaling=1;
         maxValue=2;
         while(maxValue>.90 && irradiationIntensityScaling>1/16)
             %Capture the spot without the zeroth order
             slm.modulate(irradiationIntensityScaling);
+            
+            initialImage=cam.acquire();
             initialImage=cam.acquire();
 
             %Get peak position
@@ -37,5 +40,6 @@ function [cam centerPos]=selectRegionOfInterestAroundPeakIntensity(cam,slm,roiSi
     centerPos=min(max(centerPos,floor((roiSizeForCam+1)/2)),cam.maxSize-floor((roiSizeForCam+1)/2));
     cam.regionOfInterest=[centerPos-floor(roiSizeForCam/2), roiSizeForCam];
     slm.modulate(0);
-    cam=cam.acquireBackground(cam.defaultNumberOfFramesToAverage*4);%Measure background for the new ROI
+    cam=cam.acquireBackground();
+    cam=cam.acquireBackground(cam.numberOfFramesToAverage*4);%Measure background for the new ROI
 end

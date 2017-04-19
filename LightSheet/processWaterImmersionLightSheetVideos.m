@@ -1,4 +1,4 @@
-% processWaterImmersionLightSheetVideos(folderNames,reprocessData,centerOffset)
+% processWaterImmersionLightSheetVideos(folderNames,reprocessData,centerOffset,scanShear,perspectiveScaling)
 %
 % Reads the recorded date, converts it the matrices and deconvolves.
 %
@@ -7,16 +7,17 @@
 %      reprocessData: When false, date which already has a mat file with
 %                     a restoredDataCube matrix in it will be skipped.
 %      centerOffset: The offset of the light sheet beam waist in meters given
-%                    as a two-elent vector containing the vertical (swipe direction, Y) and the
+%                    as a two-element vector containing the vertical (swipe direction, Y) and the
 %                    horizontal (propagation direction, X) offset, respectivelly.
-%      perspectiveScaling: The linear change in [x,y]=[vertical,horizontal] magnification when increasing z by one meter
+%      scanShear: The fraction change in x and y (vertical and horizontal) when moving in z (axially)
+%      perspectiveScaling: The linear change in [x,y]=[vertical,horizontal] magnification when increasing z by one meter, units m^-1.
 %
 %
 % Note: projections can be shown using:
-%         figure;subplot(1,2,1);imagesc(yRange*1e6,zRange*1e6,squeeze(max(recordedImageStack,[],1)).');ax=gca;axis equal;subplot(1,2,2);imagesc(yRange*1e6,tRangeExtended*1e6,squeeze(max(restoredDataCube,[],1)).'); ax(2)=gca;linkaxes(ax);
+%         figure;axs=subplot(1,2,1);imagesc(yRange*1e6,zRange*1e6,squeeze(max(recordedImageStack,[],1)).');axis equal;axs(2)=subplot(1,2,2);imagesc(yRange*1e6,tRange*1e6,squeeze(max(restoredDataCube,[],1)).'); linkaxes(axs);
 %         figure;imagesc(yRange*1e6,xRange*1e6,squeeze(max(recordedImageStack,[],3))); axis equal;
 % 
-function processWaterImmersionLightSheetVideos(folderNames,reprocessData,centerOffset,perspectiveScaling)
+function processWaterImmersionLightSheetVideos(folderNames,reprocessData,centerOffset,scanShear,perspectiveScaling)
     if (nargin<1 || isempty(folderNames))
 %         folderNames={pwd()};
 %         folderNames={'20120815_215406_gain300_amph1'};
@@ -70,46 +71,73 @@ function processWaterImmersionLightSheetVideos(folderNames,reprocessData,centerO
 %          folderNames={'Z:\RESULTS\2013-04-24HEK_ApOneThird\'};
 %         folderNames={'Z:\RESULTS\2013-04-24HEK_ApOneThird\test'};
 %         folderNames={'Z:\RESULTS\2013-04-26HEK_ApOneThird'};
-        folderNames={'Z:\RESULTS\2013-04-30 16_38_27.946_tiny'};
+%         folderNames={'Z:\RESULTS\2013-04-30 16_38_27.946_tiny'};
 %         folderNames={'Z:\RESULTS\2013-04-26HEK_ApOneThird'};
+%         folderNames={'Z:\RESULTS\2013-05-14_cellspheroidsWGA'};
+%         folderNames={'Z:\RESULTS\2013-05-15'};
+%         folderNames={'F:\RESULTS\2013-08-01_HEKdense','F:\RESULTS\2013-08-02_HEKdense1','F:\RESULTS\2013-08-02_HEKdense2','F:\RESULTS\2013-08-02_HEKdense3'};
+%           folderNames={'F:\RESULTS\2013-08-08','F:\RESULTS\2013-08-09'};  % center 1051 603
+%         folderNames={'F:\RESULTS\2013-08-29'};
+%         folderNames={'H:\RESULTS\'};
+%         folderNames={'F:\RESULTS\2013-08-29\HEKCellsApOneHalf'};
+%         folderNames={'H:\RESULTS\2013-09-06'};
+%         folderNames={'H:\RESULTS\2013-09-09_600nmRed_ApOneThird'};
+%         folderNames={'H:\RESULTS\2013-09-11 13_17_32.106 Bessel in Fluorescene'};
+%         folderNames={'H:\RESULTS\2013-09-11_600nmRed_ApOneThird_limitedScans\offsetScan'}; % [0 -63e-6]
+%         folderNames={'H:\RESULTS\200nmBeadsApOneThird','H:\RESULTS\600nmBeadsApOneThird'}; % [0 0]
+%         folderNames={'H:\RESULTS\2013-09-13_Amphioxus'}; % [0 0]
+%         folderNames={'Z:\RESULTS\2013-04-10_Beads200nm'};
+%         folderNames={'Z:\RESULTS\2013-04-10_Beads200nm\2013-04-10 16_10_20.097_ApOneHalf'};
+%         folderNames={'Z:\RESULTS\2013-10-10_200nmBeadsNearEntranceInSmallAgaroseDroplet'};
+%         folderNames={'E:\Stored Files\RESULTS\Amphioxus'};
+        folderNames={'H:\RESULTS\2013-11-26_zebrafish_1','H:\RESULTS\2013-11-26_zebrafish_2'...
+            ,'H:\RESULTS\2013-11-26_zebrafish_3','H:\RESULTS\2013-11-26_zebrafish_4','H:\RESULTS\2013-11-26_zebrafish_5'};
     end
     if (nargin<2) 
+%         reprocessData=false;
         reprocessData=true;
     end
     if (nargin<3)
-        centerOffset=[]; % Don't change or set to zero.
+%         centerOffset=[0 -63e-6]; % [] == [0 0] means: don't change. % vertical horizontal
+        centerOffset=[0 0];
     end
     if (nargin<4)
-        perspectiveScaling=[];
+        scanShear=[]; % [0  0.09]; % [fraction] vertical horizontal
+    end
+    if (nargin<5)
+        perspectiveScaling=[]; % [0  500]; % [m^-1] vertical horizontal
     end
     
     if (ischar(folderNames))
         folderNames={folderNames};
     end
     
-    centerOffset=[0 20e-6]; % vertical horizontal
-    perspectiveScaling=[373.4900  722.6800]; % vertical horizontal
-        
     %Load the default configuration
     functionName=mfilename();
     configPath=mfilename('fullpath');
     configPath=configPath(1:end-length(functionName));
     defaultConfigFileName=strcat(configPath,'/waterImmersion.json');
     defaultConfig=loadjson(defaultConfigFileName);
-
+    
     % Go through all the specified folders
     for (folderName=folderNames(:).')
         folderName=folderName{1};
         logMessage('Checking folder %s for recorded videos.',folderName);
-        experimentConfigFileName=strcat(folderName,'/experimentConfig.json');
+        experimentConfigFileName=fullfile(folderName,'experimentConfig.json');
         if (exist(experimentConfigFileName,'file'))
             experimentConfig=loadjson(experimentConfigFileName);
         else
-            experimentConfig={};
-            experimentConfig.detector={};
+            experimentConfig=struct();
+            experimentConfig.detector=struct();
+            experimentConfig.detector.center=[0 0];
+            experimentConfig.detector.scanShear=[0 0];
+            experimentConfig.detector.perspectiveScaling=[0 0];
         end
         if (~isempty(centerOffset))
             experimentConfig.detector.center=centerOffset;
+        end
+        if (~isempty(scanShear))
+            experimentConfig.detector.scanShear=scanShear;
         end
         if (~isempty(perspectiveScaling))
             experimentConfig.detector.perspectiveScaling=perspectiveScaling;
@@ -127,44 +155,54 @@ function processWaterImmersionLightSheetVideos(folderNames,reprocessData,centerO
             configFile=strcat(filePathAndName,'.json');
             inputFileName=strcat(filePathAndName,'.avi');
             outputFileName=strcat(filePathAndName,'.mat');
-            reprocessFile=true;
+            reprocessThisFile=true;
             if (~reprocessData && exist(outputFileName,'file'))
                 storedVariables = whos('-file',outputFileName);
-                if (ismember('fieldname', {storedVariables.name}))
-                    reprocessFile=false;
+                if (ismember('restoredDataCube', {storedVariables.name}))
+                    reprocessThisFile=false;
+                    logMessage('Already done %s, skipping it!',outputFileName);
                 end
             end
-            if (reprocessFile)
+            if (reprocessThisFile)
                 if (exist(configFile,'file'))
-                    specificConfig=loadjson(configFile);
-    %                 specificConfig.stagePositions.target=specificConfig.stagePositions.target*1e-6;
-    %                 specificConfig.stagePositions.target=specificConfig.stagePositions.actual*1e-6;
-    %                 savejson([],specificConfig,configFile);
-                    setupConfig=structUnion(experimentConfig,specificConfig);
+                    try
+                        specificConfig=loadjson(configFile);
+        %                 specificConfig.stagePositions.target=specificConfig.stagePositions.target*1e-6;
+        %                 specificConfig.stagePositions.target=specificConfig.stagePositions.actual*1e-6;
+        %                 savejson([],specificConfig,configFile);
+                        setupConfig=structUnion(experimentConfig,specificConfig);
+                    catch Exc
+                        logMessage('Could not read json config file %s, assuming defaults!',configFile);
+                        setupConfig=experimentConfig;
+                    end
                 else
-                    setupConfig=experimentConfig;
-                    [alpha beta]=determineModulationFromFileName(filePathAndName);
-                    setupConfig.modulation.alpha=alpha;
-                    setupConfig.modulation.beta=beta;
+                    logMessage('Description file with extension .json is missing, assuming defaults!');
                 end
 
                 % Load recorded data
                 logMessage('Loading %s...',inputFileName);
-                recordedImageStack=readDataCubeFromAviFile(inputFileName);
+                try
+                    recordedImageStack=readDataCubeFromAviFile(inputFileName);
+                catch Exc
+                    logMessage('Failed to load data stack from %s!',inputFileName);
+                    recordedImageStack=[];
+                end
 
-                % Store partial results
-                logMessage('Saving recorded data to %s...',outputFileName);
-                save(outputFileName,'recordedImageStack','setupConfig', '-v7.3');
-                
-                % Deconvolve
-                logMessage('Starting image reconstruction...');
-                [recordedImageStack lightSheetDeconvFilter lightSheetOtf ZOtf xRange,yRange,zRange tRange lightSheetPsf]=deconvolveRecordedImageStack(recordedImageStack,setupConfig);
-                restoredDataCube=recordedImageStack; clear recordedImageStack; % This operation does not take extra memory in Matlab
-                
-                % Append the rest of the results
-                logMessage('Saving restored data cube to %s...',outputFileName);
-                save(outputFileName,'restoredDataCube','xRange','yRange','zRange','tRange','ZOtf','lightSheetPsf','lightSheetOtf','lightSheetDeconvFilter', '-v7.3','-append');
-                clear restoredDataCube;
+                if (~isempty(recordedImageStack))
+                    % Store partial results
+                    logMessage('Saving recorded data to %s...',outputFileName);
+                    save(outputFileName,'recordedImageStack','setupConfig', '-v7.3');
+
+                    % Deconvolve
+                    logMessage('Starting image reconstruction...');
+                    [recordedImageStack lightSheetDeconvFilter lightSheetOtf ZOtf xRange,yRange,zRange tRange lightSheetPsf]=deconvolveRecordedImageStack(recordedImageStack,setupConfig);
+                    restoredDataCube=recordedImageStack; clear recordedImageStack; % This operation does not take extra memory in Matlab
+
+                    % Append the rest of the results
+                    logMessage('Saving restored data cube to %s...',outputFileName);
+                    save(outputFileName,'restoredDataCube','xRange','yRange','zRange','tRange','ZOtf','lightSheetPsf','lightSheetOtf','lightSheetDeconvFilter','-append');
+                    clear restoredDataCube;
+                end
             else
                 logMessage('Skipping file %s, already done.',inputFileName);
             end

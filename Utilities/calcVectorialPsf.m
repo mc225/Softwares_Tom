@@ -38,24 +38,31 @@
 %                    Default: unity transmission inside the pupil
 %     pupilFunctorV: A function returning the complex vertical pupil field (along Y)
 %                    as a function of carthesian coordinates normalized to the pupil radius.
+%                    When a scalar is specified, a constant field of this value is assumed for the whole circular pupil.
 %                    A scalar calculation will be done instead when nothing
 %                    or the empty list is give. Specify 0 when only
 %                    horizontal input fields are required. Don't use the
 %                    empty matrix unless scalar calculations are required.
 %                    Default: []: scalar calculation.
-%     numericalApertureInSample: The objective's numerical aperture (including refractive index, n, of the medium: n*sin(theta)).
-%     refractiveIndexOfSample: The refractive index of the medium at the focus.
+%     numericalApertureInSample: (default 1.0) The objective's numerical aperture (including refractive index, n, of the medium: n*sin(theta)).
+%     refractiveIndexOfSample: (default 1.0 for vacuum) The refractive index of the medium at the focus.
 %                    Cover slip correction is assumed in the calculation, hence
 %                    this only scales the sample grid.
-%     objectiveMagnification: The objective magnification (default 100x)
+%     objectiveMagnification: The objective magnification (default 1x)
+%                    The focal length of the objective is objectiveTubeLength/objectiveMagnification
 %     objectiveTubeLength: The focal length of the tube lens (default: 200mm)
 %     projectionDimensions:
-%               -when empty ([]), the full data cube is returned
+%               -when omitted or empty ([]), the full data cube is returned
 %               -when a vector with integers, the data is integrated along
 %                        the dimensions indicated in the vector.
 %                   Default: no projection ([])
 %
-% Example:
+% Examples:
+%     % Plot a 1D cross section through the PSF of circularly polarized beam send of wavelength 532nm, focussed by an objective with NA=0.42 in water. 
+%     xRange=[-10:.1:10]*1e-6;
+%     psf=calcVectorialPsf(xRange,0,0,532e-9,@(U,V) 1,@(U,V) 1i,0.42,1.33);
+%     figure(); plot(xRange*1e6,psf);
+%
 %     xRange=[-10:.1:10]*1e-6;yRange=[-10:.1:10]*1e-6;zRange=[-10:.1:10]*1e-6;
 %     objectiveNumericalAperture=asin(1./sqrt(2));
 %     pupilFunctor=@(U,V) sqrt(U.^2+V.^2)>.9; %Bessel beam with 10% open fraction
@@ -64,6 +71,7 @@
 %
 %     img=squeeze(psf(:,1+floor(end/2),:)).';
 %     img=img./repmat(mean(img,2),[1 size(img,2)]);
+%     figure();
 %     imagesc(xRange*1e6,zRange*1e6,img);axis equal;xlabel('x [\mu m]');ylabel('z [\mu m]');
 %
 function [psf, psfField, varargout]=calcVectorialPsf(xRange,yRange,zRange,wavelength,pupilFunctorH,pupilFunctorV,objectiveNumericalAperture,refractiveIndexOfSample,objectiveMagnification,objectiveTubeLength,projectionDimensions)
@@ -87,13 +95,13 @@ function [psf, psfField, varargout]=calcVectorialPsf(xRange,yRange,zRange,wavele
         pupilFunctorV=[]; %Along the second dimension
     end
     if (nargin<7 || isempty(objectiveNumericalAperture))
-        objectiveNumericalAperture=.80;
+        objectiveNumericalAperture=1.0;
     end
     if (nargin<8 || isempty(refractiveIndexOfSample))
-        refractiveIndexOfSample=1.33;
+        refractiveIndexOfSample=1.0;
     end
     if (nargin<9 || isempty(objectiveMagnification))
-        objectiveMagnification=40;
+        objectiveMagnification=1;
     end
     if (nargin<10 || isempty(objectiveTubeLength))
         objectiveTubeLength=200e-3;
@@ -247,16 +255,16 @@ end
 % the following arguments, also specifyable as a list, are:
 %     nxRange and nyRange: the sample points in the units of wavelength in the sample medium.
 %     nzRange: the sample points in the z dimension in units of wavelength in the sample.
-%     focalLengthInSample: (optional, default infinite) The focal length specified in units of wavelength.
+%     nfocalLengthInSample: (optional, default infinite) The focal length specified in units of wavelength.
 %     projectionDimensions: (optional, default none) The dimension along which an integration is done
 %     highestOrderIntensityRequired: (optional, default depends on nargout) If specified, (higher order) intensities upto this number are returned as well.
 %
 % If more than one output argument is specified, the first and higher order
 % intensities will be returned as 3D arrays stacked into a single 4D array.
 %
-function [f, psfIntensities]=czt2andDefocus(x,objectiveSinMaxHalfAngleInSample,nxRange,nyRange,nzRange, focalLengthInSample, projectionDimensions, highestOrderIntensityRequired)
-    if (nargin<6 || isempty(focalLengthInSample))
-        focalLengthInSample=Inf; %Assuming that focusLength >> z
+function [f, psfIntensities]=czt2andDefocus(x,objectiveSinMaxHalfAngleInSample,nxRange,nyRange,nzRange, nfocalLengthInSample, projectionDimensions, highestOrderIntensityRequired)
+    if (nargin<6 || isempty(nfocalLengthInSample))
+        nfocalLengthInSample=Inf; %Assuming that focusLength >> z
     end
     if (nargin<7)
         projectionDimensions=[];
@@ -280,20 +288,30 @@ function [f, psfIntensities]=czt2andDefocus(x,objectiveSinMaxHalfAngleInSample,n
     [U,V]=ndgrid(uRange,vRange);
     R2=min(1.0,U.^2+V.^2);
     clear U V;
-    if (isinf(focalLengthInSample))
-        unityDefocusInRad=2*pi*(sqrt(1-R2)-1); %Assuming that focusLength >> z
+    cosHalfAngleInSampleMatrix=sqrt(1-R2);
+    clear R2;
+    if (isinf(nfocalLengthInSample))
+        unityDefocusInRad=2*pi*(cosHalfAngleInSampleMatrix-1); %Assuming that focalLength >> z
     end
     
     %Loop through the z-stack
     for zIdx=1:length(nzRange)
         normalizedZ=nzRange(zIdx);
-        
-        if (~isinf(focalLengthInSample))
-            pupilDefocusInRad=2*pi*(sqrt(focalLengthInSample^2+2*focalLengthInSample*sqrt(1-R2)*normalizedZ+normalizedZ^2)-(focalLengthInSample+normalizedZ));
+        phaseOffsetOfAxialWaveletInRad=2*pi*mod(normalizedZ,1); %Center on focal point
+        % Calculate the phase delay due to z-displacement with respect to
+        % the wavelet leaving the center of the pupil. This causes the Gouy
+        % phase shift.
+        if (~isinf(nfocalLengthInSample))
+            % Geometrical difference between the axial and the off-axis ray
+            relativeDefocusPhaseDelayAcrossPupilInRad=2*pi*(...
+                sqrt(nfocalLengthInSample^2+2*nfocalLengthInSample*cosHalfAngleInSampleMatrix*normalizedZ+normalizedZ^2)...
+                -(nfocalLengthInSample+normalizedZ)...
+            );
         else
-            pupilDefocusInRad=normalizedZ*unityDefocusInRad; %Assuming that focusLength >> z
+            % Approximate the above equation for nfocalLengthInSample >> normalizedZ
+            relativeDefocusPhaseDelayAcrossPupilInRad=normalizedZ*unityDefocusInRad;
         end
-        pupil=x.*repmat(exp(1i*pupilDefocusInRad),[1 1 inputSize(3:end)]);
+        pupil=x.*repmat(exp(1i*(phaseOffsetOfAxialWaveletInRad+relativeDefocusPhaseDelayAcrossPupilInRad)),[1 1 inputSize(3:end)]);
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         psfSlice=czt2fromRanges(pupil,nxRange*2*objectiveSinMaxHalfAngleInSample,nyRange*2*objectiveSinMaxHalfAngleInSample);
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

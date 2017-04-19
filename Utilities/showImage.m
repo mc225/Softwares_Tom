@@ -35,6 +35,10 @@ function res=showImage(imageMatrix,referenceIntensity,X,Y,ax)
     elseif (isempty(imageMatrix))
         logMessage('Image matrix is empty!');
         return;
+    elseif (~any(size(imageMatrix,3)==[1 3]))
+        message=sprintf('The third dimension of the input imageMatrix should be either 1 or 3, not %d.',size(imageMatrix,3));
+        logMessage(message);
+        error(message);
     else
         %Convert to floating point
         if (~isfloat(imageMatrix))

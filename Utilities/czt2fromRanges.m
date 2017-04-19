@@ -30,7 +30,7 @@ function f=czt2fromRanges(x,xRange,yRange)
     W=exp(-2i*pi*deltaOmegaInCycles); % The ratio between the points on the spiral contour
     
     if (any(deltaOmegaInCycles.*M>1))
-        logMessage('Warning: undersampling pupil by a factor of (%0.3f, %0.3f). Image replication will occur!',deltaOmegaInCycles.*M);
+        logMessage('Warning: undersampling pupil by a factor of (%0.3f, %0.3f). Image replication will occur! Reduce the number of pixels in the lateral dimension.',deltaOmegaInCycles.*M);
     end
     
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

@@ -57,27 +57,32 @@
 %
 function [restoredDataCubeI xRange yRange zRange tRangeExtended recordedImageStack tRange ZOtf lightSheetPsf lightSheetOtf lightSheetDeconvFilter]=processLightSheetDataCube(inputFileName,stageTranslationStepSize,excitation,detection,sample,detector,focusCoordinateDecenter,openFractionOfRadius,alpha,extraIntegrationTime,illuminationCroppingFactors,dataShear,deNoiseFrames,deconvolveWithDetectionPsf,maxFilesToLoad)
     if (nargin<1)
-        inputFileName='g_fulcor.avi';
+        inputFileName='Z:\RESULTS\20120501_alpha7_int1000_g1_littlemorepower_betterfocus_beads_leftofprobe\Airy_0F.avi';
     end
     if (nargin<2)
     %     stageTranslationStepSize=0.00025e-3; % [m/frame]
-        stageTranslationStepSize=0.0001e-3; % [m/frame]
+        stageTranslationStepSize=100e-9; % [m/frame]
     end
     if (nargin<3 || isempty(excitation))
         % Objectives and wavelengths
         excitation={};
-        excitation.wavelength=532e-9; % Firefly* % 395e-9; for GFP
-        excitation.numericalApertureInAir=.42;
-        excitation.magnification=20;
-        excitation.tubeLength=200e-3; %for Mitutoyo the rear focal length is 200mm
+        excitation.wavelength=532e-9;
+        excitation.objective={};
+        excitation.objective.numericalAperture=.42;
+        excitation.fractionOfNumericalApertureUsed=1;
+        excitation.objective.magnification=20;
+        excitation.objective.tubeLength=200e-3; %for Mitutoyo the rear focal length is 200mm
         excitation.power=0.01e-3;
+        excitation.tubeLength=200e-3;
     end
     if (nargin<4 || isempty(detection))
         detection={};
-        detection.wavelength=600e-9; % Firefly* % 509e-9; for GFP
-        detection.numericalApertureInAir=.40; % .28;
-        detection.magnification=22; %Actual magnification
-        detection.tubeLength=1.1*160e-3; % for Newport %200e-3; for Mitutoyo
+        detection.wavelength=612e-9; % Firefli* Fluorescent Red (542/612nm) % 395e-9; for GFP
+        detection.objective={};
+        detection.objective.numericalAperture=.40; % .28;
+        detection.objective.magnification=20; %Actual total magnification 22
+        detection.objective.tubeLength=160e-3; % for Newport, %200e-3 for Mitutoyo / Nikon
+        detection.tubeLength=1.1*160e-3; 
     end
     if (nargin<5 || isempty(sample))
         % Sample medium specification
@@ -102,6 +107,7 @@ function [restoredDataCubeI xRange yRange zRange tRangeExtended recordedImageSta
         detector.numberOfGrayLevels=2^12;
         detector.pixelSize=7.4*[1 1]*1e-6;
         detector.framesPerSecond=1; % [s]
+        detector.center=[0 0]*1e-6;
     end
     if (nargin<7)
         focusCoordinateDecenter=[];
@@ -117,7 +123,7 @@ function [restoredDataCubeI xRange yRange zRange tRangeExtended recordedImageSta
         extraIntegrationTime=1.0; % Assume the bessel beam is illuminated equally
     end
     if (nargin<11 || isempty(illuminationCroppingFactors))
-        illuminationCroppingFactors=[1 1; 1 1]*0; %.06;
+        illuminationCroppingFactors=[1 1; 1 1]*0.06;
     end
     if (nargin<12)
         dataShear=[];
@@ -234,7 +240,7 @@ function [restoredDataCubeI xRange yRange zRange tRangeExtended recordedImageSta
     end
 
     % Sample grid specification
-    realDetectionMagnification=detection.magnification; %*200e-3/detection.tubeLength;
+    realDetectionMagnification=detection.objective.magnification*detection.objective.tubeLength/detection.tubeLength;
     xRange=detector.pixelSize(1)*([1:size(recordedImageStack,1)]-floor(size(recordedImageStack,1)/2)-1)/realDetectionMagnification; % left/right
     yRange=detector.pixelSize(2)*([1:size(recordedImageStack,2)]-floor(size(recordedImageStack,2)/2)-1)/realDetectionMagnification; % up/down
     tRange=(stageTranslationStepSize*sample.refractiveIndex)*([1:size(recordedImageStack,3)]-floor(size(recordedImageStack,3)/2+1))/detector.framesPerSecond; %Translation range (along z-axis)
@@ -256,7 +262,7 @@ function [restoredDataCubeI xRange yRange zRange tRangeExtended recordedImageSta
     %% Preparative Calculations
     
     % Define some noise related variables
-    detectionObjectiveSolidAngle=2*pi*(1-cos(asin(detection.numericalApertureInAir/sample.refractiveIndex)));
+    detectionObjectiveSolidAngle=2*pi*(1-cos(asin(detection.objective.numericalAperture/sample.refractiveIndex)));
     objectiveEfficiency=detectionObjectiveSolidAngle/(4*pi);
     overallDetectionEfficiency=sample.fluorophore.quantumYield*objectiveEfficiency*detector.quantumEfficiency;
          
@@ -274,14 +280,18 @@ function [restoredDataCubeI xRange yRange zRange tRangeExtended recordedImageSta
     logMessage('Calculating theoretical light sheet...');
     photonEnergy=hPlanck*cLight/excitation.wavelength;
     lightSheetPsf=calcLightSheetPsf(xRange,yRange,zRange,0,excitation,alpha,openFractionOfRadius,sample.refractiveIndex,illuminationCroppingFactors);
-    %lightSheetPsf=lightSheetPsf(:,1,:); %All the same in y anyway
     lightSheetPsf=lightSheetPsf*excitation.power*detector.integrationTime/photonEnergy; %Convert to photons per voxel
         
     
     %% Image reconstruction
     logMessage('Reconstructing convolved data set...');
-    [restoredDataCubeI lightSheetDeconvFilter lightSheetOtf ZOtf tRangeExtended]=reconstructLightSheetDataCube(xRange,yRange,zRange,tRange,recordedImageStack,excitation,detection,lightSheetPsf,detectionPsf,sample.signalLevel,sample.backgroundLevel,deflectBeamInsteadOfSampleMovement,deNoiseFrames);
-    restoredDataCubeI=circshift(restoredDataCubeI,[0 0 round(focusCoordinateDecenter(3))]);
+    config={}; config.excitation=excitation; config.detection=detection; config.detector=detector; config.sample=sample;
+    config.excitation.objective.refractiveIndex=1;
+    config.stagePositions={}; config.stagePositions.target=tRange;
+    config.modulation={}; config.modulation.alpha=7; config.modulation.beta=1;
+    [restoredDataCube lightSheetDeconvFilter lightSheetOtf ZOtf xRange,yRange,zRange tRange lightSheetPsf]=deconvolveRecordedImageStack(recordedImageStack,config);
+%     [restoredDataCubeI lightSheetDeconvFilter lightSheetOtf ZOtf tRangeExtended]=reconstructLightSheetDataCube(xRange,yRange,zRange,tRange,recordedImageStack,excitation,detection,lightSheetPsf,detectionPsf,sample.signalLevel,sample.backgroundLevel,deflectBeamInsteadOfSampleMovement,deNoiseFrames);
+%     restoredDataCubeI=circshift(restoredDataCubeI,[0 0 round(focusCoordinateDecenter(3))]);
     
     if (nargout==0)
         save('restoredDataCube.mat','restoredDataCubeI','xRange','yRange','zRange','tRange','tRangeExtended');

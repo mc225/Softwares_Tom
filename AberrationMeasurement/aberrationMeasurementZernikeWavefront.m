@@ -1,4 +1,4 @@
-% [measuredPupilFunction zernikeCoefficients Rho Phi]=aberrationMeasurementZernikeWavefront(slm,probeGridSize,probeFunctor,progressFunctor)
+% [measuredPupilFunction zernikeCoefficients Rho Phi]=aberrationMeasurementZernikeWavefront(slm,selectedZernikeCoefficientIndexes,probeFunctor,progressFunctor)
 %
 % Determines the aberration by tweaking the low-order Zernike terms, hence it cannot correct for amplitude modulations
 %
@@ -20,8 +20,6 @@
 %     slmSize=[20 20]; % [rows cols]
 %     referenceDeflectionFrequency=[1/4 1/4];
 %     slm=PhaseSLM(2,referenceDeflectionFrequency,[0 0 slmSize]);
-%     nbOfPhaseProbes=3;
-%     probeGridSize=[20 20 nbOfPhaseProbes];
 %     modulationFunctor=@(fieldModulationAtPupil) pause(1/30);
 %     %Using:
 %     function psf=calcPsf(fieldModulationAtPupil)
@@ -38,7 +36,11 @@
 %     end
 %     probeFunctor=@(fieldModulationAtPupil) simulateDetection(calcPsf(fieldModulationAtPupil),[5 5]);
 %
-%     measuredPupilFunction=aberrationMeasurementZernikeWavefront(slm,probeGridSize,probeFunctor)
+%     selectedZernikeCoefficientIndexes=[1  2 3  4  5 6  7 8  9 10 11]; % piston,
+%                  tip(x),tilt(y), defocus, astigmatism-diag,astigmatism-x,
+%                  coma-y,coma-x,  trefoil-y,trefoil-x,  spherical
+%
+%     measuredPupilFunction=aberrationMeasurementZernikeWavefront(slm,selectedZernikeCoefficientIndexes,probeFunctor)
 %
 function [measuredPupilFunction zernikeCoefficients X Y Rho Phi]=aberrationMeasurementZernikeWavefront(slm,selectedZernikeCoefficientIndexes,probeFunctor,progressFunctor,referenceAberration)
     if (nargin<1)
@@ -52,7 +54,7 @@ function [measuredPupilFunction zernikeCoefficients X Y Rho Phi]=aberrationMeasu
         slm.stabilizationTime=0.01;
     end
     if (nargin<2)
-        selectedZernikeCoefficientIndexes=[2 3 4]; % tilt and defocus only
+        selectedZernikeCoefficientIndexes=[2 3 4]; % tip,tilt, and defocus only
     end
     slmSize=slm.regionOfInterest(3:4);
     if (nargin<3)

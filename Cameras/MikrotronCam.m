@@ -17,7 +17,6 @@ classdef MikrotronCam < Cam
         integrationTime; % seconds
         gain;
         regionOfInterest;
-        defaultNumberOfFramesToAverage;
     end
     
     methods
@@ -61,8 +60,7 @@ classdef MikrotronCam < Cam
                 end
             end
             %Retrieve the number of bits per pixel from the format string
-            %MC1362 can be 8 or 10 bit depending on the tap mode, check it before using this;
-            cam.bitsPerPixel=8;
+            cam.bitsPerPixel=12;
             
             src=getselectedsource(vid);
             
@@ -82,7 +80,7 @@ classdef MikrotronCam < Cam
             cam.regionOfInterest=[0 0 cam.maxSize];
             cam.canSetIntegrationTime = 0;
             cam.canSetGain = 0;
-            cam.defaultNumberOfFramesToAverage=1;
+            cam.numberOfFramesToAverage=1;
         end
         
         function cam=set.integrationTime(cam,newIntegrationTime)
@@ -109,17 +107,8 @@ classdef MikrotronCam < Cam
                 gain=0;
             end
         end
-        
-        function cam=set.defaultNumberOfFramesToAverage(cam,newDefaultNumberOfFramesToAverage)
-            ensureVideoStopped(cam);
-            cam.videoInput.FramesPerTrigger=newDefaultNumberOfFramesToAverage;
-            ensureVideoStarted(cam);
-        end
-        function defaultNumberOfFramesToAverage=get.defaultNumberOfFramesToAverage(cam)
-            defaultNumberOfFramesToAverage=cam.videoInput.FramesPerTrigger;
-        end
         function cam=set.regionOfInterest(cam,newROI)
-            cam.background=0;            
+            cam.background=[];            
             if (isempty(newROI))
                 newROI=[0 0 cam.maxSize];
             end            
@@ -138,50 +127,7 @@ classdef MikrotronCam < Cam
         end
         function roi=get.regionOfInterest(cam)
             roi([2 1 4 3])=cam.videoInput.ROIPosition;
-        end
-        function cam=acquireBackground(cam,nbFrames)
-            if (nargin<2)
-                nbFrames=cam.defaultNumberOfFramesToAverage;
-            end
-            cam=acquireBackground@Cam(cam,nbFrames);
-        end
-        function img=acquireMultiple(cam,nbFrames,videoFileName,frameRate)
-            if (nargin<2)
-                nbFrames=cam.defaultNumberOfFramesToAverage;
-            end            
-            if (nargin<3)        
-               img=acquireMultiple@Cam(cam,nbFrames);
-               disp('Start recording frames......');   
-               logMessage('%d frames were recorded into memory',nbFrames);
-            else
-                disp('Start recording vedios......');    
-                img = acquireMultiple@Cam(cam,nbFrames);
-                if ~isempty(videoFileName)
-                    if length(videoFileName)>4
-                        fileExtension= videoFileName(end-3:end);
-                        if ~strcmpi(fileExtension,'.avi')
-                            videoFileName = strcat(videoFileName,'.avi');
-                        end
-                    else
-                        videoFileName = strcat(videoFileName,'.avi');
-                    end
-                    diskLogger = VideoWriter(videoFileName, 'Uncompressed AVI');  
-                    if nargin<4
-                        frameRate=25;
-                    end                    
-                    diskLogger.FrameRate = frameRate;
-                    open(diskLogger);    
-                    img(:,:,2,:) = img(:,:,1,:);
-                    img(:,:,3,:) = img(:,:,1,:);
-                    writeVideo(diskLogger,img./max(img(:))); 
-                    close(diskLogger);
-                    msg = sprintf('%d frames were recorded into AVI file at frame rate %d',nbFrames,frameRate);                   
-                else
-                    msg = sprintf('%d frames were recorded into memory',nbFrames);
-                end
-                logMessage(msg);
-            end           
-        end
+        end 
         
         function delete(cam)
             delete@Cam(cam);
@@ -192,78 +138,39 @@ classdef MikrotronCam < Cam
         end
     end
     
-    methods(Access = protected)        
+    methods(Access = protected)
         function img=acquireDirect(cam,nbFrames)
-            framesPerTrigger=cam.defaultNumberOfFramesToAverage;
+            nbColorChannels=1;
+            maxPixelValue=(2^cam.bitsPerPixel-1-1.0*cam.maxValue254);
+            imgSize=cam.hardwareRegionOfInterest(3:4);
+            framesPerTrigger=nbFrames*cam.numberOfFramesToAverage;
              
-            %Round the number of frames up to a multiple of the frames per trigger
-            nbFrames=nbFrames*ceil(nbFrames/framesPerTrigger);
-            for (triggerIdx=1:nbFrames/framesPerTrigger)
-                snapshots=[];
-                while (isempty(snapshots))
-                    ensureVideoStarted(cam);
-                    trigger(cam.videoInput);
-                    try
-                        snapshots=double(getdata(cam.videoInput,framesPerTrigger));
-                    catch Exc
-                        logMessage('Something went wrong, reseting the videoinput object...');
-                        stop(cam.videoInput);
-                        start(cam.videoInput);
-                    end
-                end
-                %Debug info
-                if (any(snapshots(:)==(2^cam.bitsPerPixel-1)))
-                    logMessage('%u pixels are saturated in %u frames!',[sum(snapshots(:)==(2^cam.bitsPerPixel-1)) framesPerTrigger]);
-                end
-                %Normalize the maximum graylevel to 1
-                snapshots=snapshots./(2^cam.bitsPerPixel-1);
-                
-                snapshots=snapshots(:,:,1);
-                snapshots=sum(snapshots,4);
-                
-                if (triggerIdx==1)
-                    img=snapshots;
-                else
-                    img=img+snapshots;
-                end
-
-            end
-            
-            if (nbFrames>1)
-                img=img./nbFrames;
-            end
-            
-        end
-        
-        function img=acquireMultipleFrames(cam,nbFrames)
-            if (nargin<2)
-                nbFrames=1;
-            end  
-            previousFramesPerTrigger=cam.defaultNumberOfFramesToAverage;
-            cam.defaultNumberOfFramesToAverage=nbFrames;
-            snapshots=[];
-            while (isempty(snapshots))
+            img=[];
+            while (isempty(img) || any([size(img,1) size(img,2)]~=imgSize))
                 ensureVideoStarted(cam);
                 trigger(cam.videoInput);
                 try
-                    snapshots=double(getdata(cam.videoInput,nbFrames));
+                    img=getdata(cam.videoInput,framesPerTrigger);
+                    %Debug info
+                    if (max(img(:))>=maxPixelValue)
+                        msg=sprintf('%u pixels are saturated',sum(img(:)==max(img(:))));
+                        if (framesPerTrigger~=1)
+                            msg=strcat(msg,sprintf(' in %u frames',framesPerTrigger));
+                        end
+                        logMessage(msg);
+                    end
+                    % Average cam.numberOfFramesToAverage consecutive frames
+                    img=mean(single(reshape(img,[],cam.numberOfFramesToAverage,nbFrames)),2);
+                    img=reshape(img,[imgSize nbColorChannels nbFrames]);
                 catch Exc
                     logMessage('Something went wrong, reseting the videoinput object...');
                     stop(cam.videoInput);
                     start(cam.videoInput);
                 end
-            end            
-            for frameIndex = 1:nbFrames
-                img(:,:,1,frameIndex)=(snapshots(:,:,1,frameIndex)-cam.background)./(2^cam.bitsPerPixel-1);            
-                %Debug info
-                if (any(img(:,:,1,frameIndex)==(2^cam.bitsPerPixel-1)))
-                    logMessage('%u pixels are saturated in %u frames!',[sum(sum(img(:,:,frameIndex)==(2^cam.bitsPerPixel-1))) frameIndex]);
-                end
             end
-            %restore settings;
-            cam.defaultNumberOfFramesToAverage=previousFramesPerTrigger;              
+            %Normalize the maximum graylevel to 1
+            img=img./maxPixelValue;
         end
-        
     end
     
     

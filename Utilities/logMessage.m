@@ -58,7 +58,7 @@ function message=logMessage(message,values,recipientEmailToAddresses,attachments
     end
     %Prepare the message
     synopsis=message;
-    message=sprintf('%d-%02d-%02d %02d:%02d:%02.3f| %s',timeNow(1),timeNow(2),timeNow(3),timeNow(4),timeNow(5),timeNow(6),message);
+    message=sprintf('%04.0f-%02.0f-%02.0f %02.0f:%02.0f:%06.3f| %s',timeNow(1),timeNow(2),timeNow(3),timeNow(4),timeNow(5),timeNow(6),message);
     disp(message);
     %Write the message to file
     fid = fopen('log.txt','a');
@@ -99,6 +99,7 @@ function message=logMessage(message,values,recipientEmailToAddresses,attachments
                 sendmail(recipientEmailToAddresses,synopsis,[message sprintf('\n\n\n SENDING WITH ATTACHMENT FAILED!')]);
             end
         catch Exc
+            Exc
             logMessage('Could not send as e-mail: %s',Exc.message);
         end
     end
